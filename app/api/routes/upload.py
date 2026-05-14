@@ -1,13 +1,44 @@
+import os
 import traceback
+from collections import defaultdict
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
 from app.services.document_service import DocumentService
 from app.services.vector_db_service import VectorDBService
+from app.services.hybrid_retrieval_service import HybridRetrievalService
 from app.core.logger import setup_logger
-from app.api.dependencies import get_current_active_admin_or_teacher
+from app.api.dependencies import get_current_active_admin_or_teacher, get_current_user
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/upload", tags=["upload"])
-vector_db_service = VectorDBService() 
+vector_db_service = VectorDBService()
+
+
+@router.get("/documents")
+async def list_documents(current_user: dict = Depends(get_current_user)):
+    """Return unique source documents currently indexed in the vector store."""
+    try:
+        store = vector_db_service.get_vector_store()
+        data = store.get()
+        metas = data.get("metadatas", []) or []
+        counts: dict[str, int] = defaultdict(int)
+        pages: dict[str, set] = defaultdict(set)
+        for m in metas:
+            if not m:
+                continue
+            src = (m.get("source") or "Unknown").split("/")[-1]
+            counts[src] += 1
+            page = m.get("page")
+            if page is not None:
+                pages[src].add(page)
+        documents = [
+            {"filename": name, "chunks": counts[name], "pages": len(pages[name])}
+            for name in sorted(counts.keys())
+        ]
+        return {"documents": documents, "total": len(documents)}
+    except Exception:
+        logger.error("Failed to list indexed documents")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to list documents.")
 
 @router.post("/")
 async def upload_document(
@@ -35,7 +66,15 @@ async def upload_document(
         logger.info("[3/3] Initiating embedding generation and ChromaDB insertion...")
         vector_db_service.store_chunks(chunks)
         logger.info("[3/3] Embeddings generated and stored in Vector Database.")
-        
+
+        # Rebuild the in-memory BM25 index so the new chunks are immediately searchable
+        # via the hybrid retriever. Safe even if hybrid service hasn't been used yet.
+        try:
+            HybridRetrievalService().rebuild()
+            logger.info("Hybrid BM25 index rebuilt with new chunks.")
+        except Exception:
+            logger.warning("BM25 rebuild failed (non-fatal); vector retrieval still works.")
+
         logger.info(f"==== UPLOAD PIPELINE COMPLETE ====")
         return {
             "filename": file.filename, 
