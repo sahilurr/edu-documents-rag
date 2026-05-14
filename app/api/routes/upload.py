@@ -2,12 +2,13 @@ import traceback
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
 from app.services.document_service import DocumentService
 from app.services.vector_db_service import VectorDBService
+from app.services.hybrid_retrieval_service import HybridRetrievalService
 from app.core.logger import setup_logger
 from app.api.dependencies import get_current_active_admin_or_teacher
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/upload", tags=["upload"])
-vector_db_service = VectorDBService() 
+vector_db_service = VectorDBService()
 
 @router.post("/")
 async def upload_document(
@@ -35,7 +36,15 @@ async def upload_document(
         logger.info("[3/3] Initiating embedding generation and ChromaDB insertion...")
         vector_db_service.store_chunks(chunks)
         logger.info("[3/3] Embeddings generated and stored in Vector Database.")
-        
+
+        # Rebuild the in-memory BM25 index so the new chunks are immediately searchable
+        # via the hybrid retriever. Safe even if hybrid service hasn't been used yet.
+        try:
+            HybridRetrievalService().rebuild()
+            logger.info("Hybrid BM25 index rebuilt with new chunks.")
+        except Exception:
+            logger.warning("BM25 rebuild failed (non-fatal); vector retrieval still works.")
+
         logger.info(f"==== UPLOAD PIPELINE COMPLETE ====")
         return {
             "filename": file.filename, 

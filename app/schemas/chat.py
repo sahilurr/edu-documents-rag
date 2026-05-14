@@ -5,6 +5,7 @@ class SourceCitation(BaseModel):
     source: str = Field(..., description="The name of the source document.")
     page: Optional[int] = Field(None, description="The page number where the text was found.")
     snippet: str = Field(..., description="A short preview of the exact text chunk used.")
+    score: Optional[float] = Field(None, description="Cross-encoder rerank score (higher = more relevant).")
 
 class ChatRequest(BaseModel):
     query: str = Field(..., description="The student's question to be answered.")

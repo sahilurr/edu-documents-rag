@@ -5,8 +5,10 @@ langchain
 langchain-community
 chromadb
 sentence-transformers
+rank_bm25
 PyMuPDF
 python-dotenv
 motor
 pydantic
+pydantic-settings
 email-validator
